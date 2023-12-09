@@ -1,0 +1,105 @@
+---
+title: "209_hw4"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-11-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+load("final5.rda")
+library('rddtools')
+library(AER)
+library(dplyr)
+
+```
+1. estimate the effect of class size on math scores using schools with enrollment between 36 and 45 pupils. Explore different choices of bandwidths to evaluate the sensitivity of the estimator
+
+```{r}
+classize_on_math <- function(lb, ub){
+  df <- final5 %>% filter(c_size >= lb & c_size <= ub)
+  df$Z <- df$c_size >= 41
+  summary(ivreg(avgmath ~ classize | Z, data = df))
+}
+classize_on_math(36, 45)
+```
+
+```{r}
+classize_on_math(20, 60)
+classize_on_math(25, 55)
+classize_on_math(30, 50)
+classize_on_math(36, 45)
+
+```
+The standard errors provide a measure of the uncertainty in the estimated coefficients. 
+
+
+
+2. Repeat the analysis, controlling for the percentage of disadvantaged students (variable tip_a) and a linear trend in enrollment.
+
+```{r}
+classize_on_math_disadvatage_control <- function(lb, ub){
+  df <- final5 %>% filter(c_size >= lb & c_size <= ub)
+  df$Z <- df$c_size >= 41
+  summary(ivreg(avgmath ~ classize + tip_a | Z + tip_a , data = df))
+}
+classize_on_math_disadvatage_control(36, 45)
+
+```
+
+```{r}
+classize_on_math_disadvatage_control(20, 60)
+classize_on_math_disadvatage_control(25, 55)
+classize_on_math_disadvatage_control(30, 50)
+classize_on_math_disadvatage_control(36, 45)
+```
+
+
+The standard errors of the estimated effect of class size on math scores decrease with all bandwidth choices after controlling for the percentage of disadvantaged students.
+
+3. Plot the distribution of the assignment variable(enrollment). Is there an indication that schools are able to manipulate enrollment(i.e. is there an indication that schools can choose to add or remove classrooms)
+
+```{r}
+df <- final5 %>% filter(c_size >= 20 & c_size <= 60)
+hist(df$c_size, main="Histogram of enrollment", xlab="enrollment", ylab="counts")
+abline(v = 40, col = "red")
+abline(v = 80, col = "red")
+abline(v = 120, col = "red")
+```
+There is an indication that schools are able to manipulate enrollment/ choose to add or remove classrooms due to the jump in counts at each splitting thresholds (marked by red vertical lines). When the enrollment is below 40, schools tend to increase the enrollment and add more classrooms so that the class size can be reduced.
+
+The enrollment distribution would be uniform if the schools are unable to manipulate enrollment. 
+
+
+
+4. Conduct an analysis with an outcome that you think is unaffected by the treatment (in other words, use a negative outcome)
+
+
+Create a new variable `boy_ratio` which should not be affected by class size.
+
+
+```{r}
+
+negative_outcome <- function(lb, ub){
+  df <- final5 %>% filter(c_size >= lb & c_size <= ub)
+  df$boy_ratio <- df$c_boys/( df$c_boys +  df$c_girls)
+  df$Z <- df$c_size >= 41
+  summary(ivreg(boy_ratio ~ classize | Z, data = df))
+}
+negative_outcome(36, 45)
+```
+```{r}
+negative_outcome(20, 60)
+negative_outcome(25, 55)
+negative_outcome(30, 50)
+negative_outcome(36, 45)
+```
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

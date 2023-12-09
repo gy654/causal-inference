@@ -1,0 +1,129 @@
+---
+title: "209_hw1"
+output: html_document
+date: '2023-10-03'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+
+## R Markdown
+
+## Problem 2
+(e). Using data in `verby.Rdata` compute numerical values for $\hat{\tau}$, and $\hat{V}$, and $\hat{CI}_{0.95}$
+
+```{r}
+vernby <- readRDS("vernby.rds")
+z <- vernby$citizen
+w <- vernby$woman
+y <- vernby$invited
+group_11 <- y[z==1 & w==1]
+group_10 <- y[z==1 & w==0]
+tau_hat <- mean(group_11) - mean(group_10)
+var_hat <- var(group_11)/length(group_11) + var(group_10)/length(group_10)
+interval <- c(tau_hat - 1.96 * sqrt(var_hat), tau_hat + 1.96 * sqrt(var_hat))
+print('causal effect of receiving a resume from a female citizen vs a male citizen')
+print(paste('tau_hat:', tau_hat))
+print(paste('var_hat:', var_hat))
+print(paste('95% Confidence Interval: [', interval[1],',', interval[2], ']'))
+```
+
+```{r}
+group_00 <- y[z==0 & w==0]
+group_10 <- y[z==1 & w==0]
+theta_hat <- mean(group_10) - mean(group_00) 
+var_hat <- var(group_10)/length(group_10) + var(group_00)/length(group_00)
+interval <- c(theta_hat - 1.96 * sqrt(var_hat), theta_hat + 1.96 * sqrt(var_hat))
+print('causal effect of receiving a resume from a citizen male vs a non-citizen male')
+print(paste('theta_hat:', theta_hat))
+print(paste('var_hat:', var_hat))
+print(paste('95% Confidence Interval: [', interval[1],',', interval[2], ']'))
+```
+3. Using the data from `vernby.Rdata`, compute a p-value for this null hypothesis.
+```{r}
+T_obs <- mean(group_11) - mean(group_00)
+n_simulations <- 10000
+sim_T <- vector(length = n_simulations)
+for (i in 1: n_simulations){
+  vernby$citizen <- sample(vernby$citizen)
+  vernby$woman <- sample(vernby$woman)
+  sim_T[i] <- mean(subset(vernby, citizen == 1 & woman == 1)$invited) - mean(subset(vernby, citizen == 0 & woman == 0)$invited)
+}
+p_value <- mean(sim_T >= T_obs)
+print(paste('p_value:', p_value))
+```
+
+
+
+## Problem 4
+
+1. First, conduct Fisher's randomization test with the test statistic $T(Z, Y) = \frac{1}{n_1}\sum_{i=1}^{n}Z_iY_i - \frac{1}{n_0}\sum_{i=1}^{n}(1-Z_i)Y_i$. Compute the p-value using Monte Carlo
+
+
+```{r}
+lalonde <- readRDS("lalonde.rds")
+Y <- lalonde$Y
+Z <- lalonde$Z
+obs_stats <- mean(Y[Z==1]) - mean(Y[Z==0])
+n_simulations <- 10000
+sim_stats <- vector(length = n_simulations)
+for (i in 1: n_simulations){
+  permuted_Z <- sample(Z)
+  sim_stats[i] <- mean(Y[permuted_Z == 1]) - mean(Y[permuted_Z == 0])
+}
+p_value <- mean(sim_stats >= obs_stats)
+print(paste('p_value:', p_value))
+```
+
+
+2. Reanalyze the data using the test statistic $T(Z, Y) = coef(lm(Y\sim Z+race + nodegree + age + married))$. Compute the p_value using Monte Carlo
+
+```{r}
+relevant <- lalonde %>% select(Z, race, nodegree, age, married)
+linear_model <- lm(Y ~ ., data = relevant)
+obs_stats <- coef(linear_model)['Z']
+
+n_simulations <- 10000
+sim_stats <- vector(length = n_simulations)
+for (i in 1: n_simulations){
+  permuted_Z <- sample(Z)
+  permuted_df <- data.frame(Z = permuted_Z, relevant)
+  perm_model <- lm(Y ~ ., data = permuted_df)
+  sim_stats[i] <- coef(perm_model)['Z']
+}
+p_value <- mean(sim_stats >= obs_stats)
+print(paste('p_value:', p_value))
+```
+
+3. Re-analyze the data using the test statistic $T(Z, Y) = coef(lm(Y ~ Z + (race + nodegree + age + married)^2))$. Compute the p-value using Monte Carlo
+
+```{r}
+linear_model2 <- lm(Y ~ Z + (race + nodegree + age + married)^2, data = relevant)
+obs_stats2 <- coef(linear_model2)['Z']
+
+n_simulations <- 10000
+sim_stats2 <- vector(length = n_simulations)
+for (i in 1: n_simulations){
+  permuted_Z <- sample(Z)
+  permuted_df <- data.frame(Z = permuted_Z, relevant)
+  perm_model <- lm(Y ~ Z + (race + nodegree + age + married)^2, data = permuted_df)
+  sim_stats2[i] <- coef(perm_model)['Z']
+}
+p_value2 <- mean(sim_stats2 >= obs_stats2)
+print(paste('p_value:', p_value2))
+```
+
+
+4. 
+
+Power improves (p_value drops) as we choose different test statistics. The ATE provides the lowest power , the coefficient of the first linear model provides intermediate power, and the coefficient of the second linear model provides the highest power. 
+
+Observe that different test statistics may have different computational complexities. Specifically, the fisher randomization test with statistics = coefficient of Z in the second linear model has the longest running time, while using ATE as statistics takes shortest running time. 
+
+
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

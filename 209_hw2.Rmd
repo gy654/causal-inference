@@ -1,0 +1,302 @@
+---
+title: "209_hw2"
+output: html_document
+date: '2023-10-18'
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(estimatr)
+library(Rcpp)
+library(randomForest)
+library(zoo)
+```
+
+## R Markdown
+
+## Problem 1
+
+2. Read the dataset into R. How many students were assigned to each of the four arms? We will preprocess the data in the same way as the report. First, remove student who enrolled in less than 2 courses in Fall 2005. You will find that there are 1579 students left in the dataset.
+
+```{r}
+star <- read.csv('STAR_public_use.csv')
+star <- star %>% filter(numcourses_nov1 >=2)
+print(paste('after preprocessing,',nrow(star), 'students left in the dataset'))
+
+control <- star %>% filter(control ==1) 
+ssp <- star %>% filter(ssp ==1 & sfp ==0)
+sfp <- star %>% filter(ssp ==0 & sfp ==1)
+sfsp <- star %>% filter(sfsp ==1)
+print(paste('control arm:', control %>% nrow()))
+print(paste('ssp arm:', ssp %>% nrow()))
+print(paste('sfp arm:', sfp %>% nrow()))
+print(paste('sfsp arm:', sfsp %>% nrow()))
+
+```
+3. Some students did not have fall grades because they took no one-semester courses. What is the percentage of students without fall grade in each treatment arm? Remove students without fall grades. You will end up with 1404 observations.
+
+```{r}
+no_fall_grade_percent <- function(sub){
+  return (100*sum(is.na(sub$grade_20059_fall))/nrow(sub))
+}
+print(paste('in control group:', no_fall_grade_percent(control), 'percent has no fall grade'))
+print(paste('in ssp group:', no_fall_grade_percent(ssp), 'percent has no fall grade'))
+print(paste('in sfp group:', no_fall_grade_percent(sfp), 'percent has no fall grade'))
+print(paste('in sfsp group:', no_fall_grade_percent(sfsp), 'percent has no fall grade'))
+
+star <- star[!is.na(star$grade_20059_fall), ]
+print(paste('after removing students without fall grade, end up with ', nrow(star), 'students.'))
+```
+4. Identify columns in the data corresponding to the "basic controls" in footnote 11, page 143 of the report(the jargon "control" refers to the covariates used in the regression adjustment).
+
+> Columns labeled “Basic controls” report estimates of the coefficient on assignment-group dummies in models that control for sex, mother tongue, high school grade quartile, and number of courses as of November 1. These variables come from administrative data.
+
+columns: female, english, hsgroup, numcourses_nov1
+
+5. Use the "basic controls" and Lin's estimator $\hat{\tau_{I}}$ to estimate the causal effect on fall grades. Use robust standard errors. In R, you can obtain robust standard errors using lm_robust from the estimatr package.
+
+```{r}
+control <- star %>% filter(control ==1) 
+ssp <- star %>% filter(ssp ==1 & sfp ==0)
+sfp <- star %>% filter(ssp ==0 & sfp ==1)
+sfsp <- star %>% filter(sfsp ==1)
+```
+
+
+```{r}
+causal_effect <- function(sub){
+  control$arm <- 0
+  sub$arm <- 1
+  combined_df <- bind_rows(control, sub) 
+  combined_df <- combined_df %>% select(female, english, hsgroup, numcourses_nov1, grade_20059_fall, arm)
+
+
+  combined_df$numcourses_nov1 <- combined_df$numcourses_nov1  - mean(combined_df$numcourses_nov1)
+  
+  combined_df$female <- as.factor(combined_df$female)
+  combined_df$english <- as.factor(combined_df$english)
+  combined_df$hsgroup <- as.factor(combined_df$hsgroup)
+
+  fit <- lm_robust(grade_20059_fall~ arm + female + english + hsgroup + numcourses_nov1 + female:english + female:hsgroup + female:numcourses_nov1 + english:hsgroup + english:numcourses_nov1 + hsgroup:numcourses_nov1, data = combined_df)
+  return (c(coef(fit)['arm'], fit$std.error['arm']))
+  #summary(fit)
+}
+
+r_ssp = causal_effect(ssp)
+r_sfp = causal_effect(sfp)
+r_sfsp = causal_effect(sfsp)
+print(paste('The estimated causal effect of ssp on fall grades is: ',r_ssp[1], ',robust standard errors is:', r_ssp[2]))
+print(paste('The estimated causal effect of sfp on fall grades is: ',r_sfp[1], ',robust standard errors is:', r_sfp[2]))
+print(paste('The estimated causal effect of sfsp on fall grades is: ',r_sfsp[1], ',robust standard errors is:', r_sfsp[2]))
+
+```
+
+```{r}
+causal_effect <- function(sub){
+  control$arm <- 0
+  sub$arm <- 1
+  combined_df <- bind_rows(control, sub) 
+  combined_df <- combined_df %>% select(female, english, hsgroup, numcourses_nov1, grade_20059_fall, arm)
+
+
+  combined_df$numcourses_nov1 <- combined_df$numcourses_nov1  - mean(combined_df$numcourses_nov1)
+  
+  combined_df$female <- as.factor(combined_df$female)
+  combined_df$english <- as.factor(combined_df$english)
+  combined_df$hsgroup <- as.factor(combined_df$hsgroup)
+
+  fit <- lm_lin(grade_20059_fall~ arm , ~female + english + hsgroup + numcourses_nov1, data = combined_df)
+  return (c(coef(fit)['arm'], fit$std.error['arm']))
+  #summary(fit)
+}
+
+r_ssp = causal_effect(ssp)
+r_sfp = causal_effect(sfp)
+r_sfsp = causal_effect(sfsp)
+print(paste('The estimated causal effect of ssp on fall grades is: ',r_ssp[1], ',robust standard errors is:', r_ssp[2]))
+print(paste('The estimated causal effect of sfp on fall grades is: ',r_sfp[1], ',robust standard errors is:', r_sfp[2]))
+print(paste('The estimated causal effect of sfsp on fall grades is: ',r_sfsp[1], ',robust standard errors is:', r_sfsp[2]))
+
+```
+
+6. Use the "basic controls" and machine learning based regression adjustment to compute estimators and confidence intervals. You are free to use any flexible ML tool, including random forests and neural nets as long a the method is tuned appropriately.
+
+```{r}
+  # partition
+
+
+ml_causal_effect <- function(control, treat){
+
+  treat_partition_indices <- sample(1:nrow(treat), size = floor(0.5 * nrow(treat)))
+  
+  treat_p1 <- treat[treat_partition_indices, ]
+  treat_p2 <- treat[-treat_partition_indices, ]
+  
+  control_partition_indices <- sample(1:nrow(control), size = floor(0.5 * nrow(control)))
+  control_p1 <- control[control_partition_indices, ]
+  control_p2 <- control[-control_partition_indices, ]
+
+  
+  # fit on I2
+  rf_mu1_p2 <- randomForest(grade_20059_fall ~ female + english + hsgroup + numcourses_nov1, data = treat_p2, ntree = 100)
+  rf_mu0_p2 <- randomForest(grade_20059_fall ~ female + english + hsgroup + numcourses_nov1, data = control_p2, ntree = 100)
+  # fit on I1
+  rf_mu1_p1 <- randomForest(grade_20059_fall ~ female + english + hsgroup + numcourses_nov1, data = treat_p1, ntree = 100)
+  rf_mu0_p1 <- randomForest(grade_20059_fall ~ female + english + hsgroup + numcourses_nov1, data = control_p1, ntree = 100)
+
+  
+  # fill in on I1
+  control_p1$y0 <- control_p1$grade_20059_fall
+  control_p1$grade_20059_fall <- NULL
+  treat_p1$y1 <- treat_p1$grade_20059_fall
+  treat_p1$grade_20059_fall <- NULL
+  
+  control_p1$y1 <- predict(rf_mu1_p2, newdata = control_p1)
+  treat_p1$y0 <- predict(rf_mu0_p2, newdata = treat_p1)
+  
+  # calibration
+  control_p1$y1 <- control_p1$y1 + mean(treat_p1$y1 - predict(rf_mu1_p2, newdata = treat_p1))
+  treat_p1$y0 <- treat_p1$y0 + mean(control_p1$y0 - predict(rf_mu0_p2, newdata = control_p1))
+  
+  combined_1 <- bind_rows(control_p1, treat_p1)
+  tau_hat_p1 <- mean(combined_1$y1 - combined_1$y0)
+  
+  
+  # fill in on I2
+  control_p2$y0 <- control_p2$grade_20059_fall
+  control_p2$grade_20059_fall <- NULL
+  treat_p2$y1 <- treat_p2$grade_20059_fall
+  treat_p2$grade_20059_fall <- NULL
+  
+  control_p2$y1 <- predict(rf_mu1_p1, newdata = control_p2)
+  treat_p2$y0 <- predict(rf_mu0_p1, newdata = treat_p2)
+  
+  # calibration
+  control_p2$y1 <- control_p2$y1 + mean(treat_p2$y1 - predict(rf_mu1_p1, newdata = treat_p2))
+  treat_p2$y0 <- treat_p2$y0 + mean(control_p2$y0 - predict(rf_mu0_p1, newdata = control_p2))
+  
+  combined_2 <- bind_rows(control_p2, treat_p2)
+  tau_hat_p2 <- mean(combined_2$y1 - combined_2$y0)
+  
+  I1_cardinality <- nrow(combined_1)
+  I2_cardinality <- nrow(combined_2)
+  total_cardinality <- I1_cardinality + I2_cardinality
+  tau_hat <- (I1_cardinality/total_cardinality) * tau_hat_p1 + (I2_cardinality/total_cardinality) * tau_hat_p2
+  #print(tau_hat)
+  return (tau_hat)
+}
+
+```
+
+
+```{r}
+# bootstrap to get confidence interval
+get_sd <- function(num_sim){
+
+  ssp_bs <- array(NA, dim = c(num_sim))
+  sfp_bs <- array(NA, dim = c(num_sim))
+  sfsp_bs <- array(NA, dim = c(num_sim))
+  
+  for (i in 1:num_sim){
+    ssp_bs[i] <- ml_causal_effect(control,ssp)
+    sfp_bs[i] <- ml_causal_effect(control,sfp)
+    sfsp_bs[i] <- ml_causal_effect(control, sfsp)
+  }
+  return (c(sd(ssp_bs), sd(sfp_bs), sd(sfsp_bs), mean(ssp_bs), mean(sfp_bs), mean(sfsp_bs)))
+}
+res <- get_sd(200)
+sd_ssp <- res[1]
+sd_sfp <- res[2]
+sd_sfsp <- res[3]
+mean_ssp <- res[4]
+mean_sfp <- res[5]
+mean_sfsp <- res[6]
+
+```
+
+
+```{r}
+
+
+display_res <- function(arm_name, mean, sd){
+  print(paste('The estimated causal effect of', arm_name, ' on fall grades is: ',mean, ', confidence interval is:[', mean - 1.96* sd, ',',mean + 1.96* sd, ']' ))
+}
+
+display_res('ssp', mean_ssp, sd_ssp)
+display_res('sfp', mean_sfp, sd_sfp)
+display_res('sfsp', mean_sfsp, sd_sfsp)
+
+
+```
+
+
+# Problem3: children's television workshop experiment
+
+1. Compute a Neymanian confidence interval (ignoring the covariates) in this paired randomized experiment
+
+```{r}
+television <- load(file='television.rda')
+```
+
+```{r}
+treated <- df %>% filter(Treatment ==1)
+control <- df %>% filter(Treatment ==0)
+merged <- merge(treated, control, by = "Pair", all = TRUE, suffixes = c("_1", "_0"))
+
+merged$diff = merged$Post.Test.Score_1 - merged$Post.Test.Score_0
+tau_hat = mean(merged$diff)
+se <- sqrt(mean((merged$diff - tau_hat)^2)/(length(merged)-1))
+
+CI_l <- tau_hat - 1.96 * se
+CI_r <- tau_hat + 1.96 * se
+print(tau_hat)
+print(paste('A Neymanian 95% confidence onterval in this paired randomized experiment is: [',CI_l, ',', CI_r, ']' ))
+print(paste('standard error:', se))
+
+```
+
+```{r}
+merged
+```
+
+
+2. conduct regression adjustment, adjusting for $\hat{\tau_{x, i}} = (2Z_i-1)(X_{i1}-X_{i2})$. What is the standard error of the causal effect estimate? Compare the standard error of the regression-adjusted estimator to the standard error of the estimator in 1.
+
+
+
+```{r}
+merged$tau_x <- merged$Pre.Test.Score_1 - merged$Pre.Test.Score_0
+adjusted_se <- summary(lm( diff~ tau_x, data = merged))$coefficients["(Intercept)", "Std. Error"]
+print(paste('After adjustment, the standard error is: ', adjusted_se))
+```
+
+
+The standard error = 1.4096 drops after adjusting for pre treatment variables(pre-test scores between two classes in the same pair) compared to standard error= 4.6363374553628 in the previous case.
+
+(3). Suppose we had done a completely randomized experiment and observed this data. Compute a Neymanian confidence interval under this assumption. What do you observe?
+
+```{r}
+y <- df$Post.Test.Score
+z <- df$Treatment
+tau_hat <- mean(y[z==1]) - mean(y[z==0])
+se_hat <- sqrt(var(y[z==1])/length(y[z==1]) + var(y[z==0])/length(y[z==0]))
+
+
+random_CI_l <- tau_hat - 1.96 * se_hat
+random_CI_r <- tau_hat + 1.96 * se_hat
+
+print(paste('Under randomized experiment, a Neymanian confidence interval is:[',random_CI_l,',', random_CI_r, ']' ))
+print(paste('under randomized experiment, standard error is: ', se_hat))
+```
+
+We observe that under randomization assumption, the standard error of the estimator is much larger than that obtained under paired randomized experiment.
+
+
+
+
+
+

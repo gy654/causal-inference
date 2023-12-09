@@ -1,0 +1,359 @@
+---
+title: "209_hw3"
+output: html_document
+date: "2023-11-04"
+---
+
+```{r setup, include=FALSE}
+library(DOS2)
+library(optmatch)
+library(RItools)
+library(plyr)
+library(rcbalance)
+library(ggplot2)
+source('utility.R')
+```
+
+# Problem1 
+## Part A
+1. What covariates seem to you the most imbalanced in the dataset?
+
+```{r cars}
+dynarski_df <- data('dynarski')
+xBalance(zb ~ faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female, data=dynarski)
+
+```
+`faminc`， `edm` seem to be the most imbalanced in the dataset.
+
+2. Plot the histograms of these covariates in the treatment and control groups.
+
+```{r}
+ggplot(data=dynarski, aes(x=faminc, group=as.factor(zb), 
+                     fill=as.factor(zb))) + geom_density(alpha=0.5) + theme_bw()
+
+ggplot(data=dynarski, aes(x=as.factor(edmissm))) + 
+  geom_histogram(stat="count") + facet_grid(.~zb) + theme_bw()
+
+ggplot(data=dynarski, aes(x=as.factor(edm))) + 
+  geom_histogram(stat="count") + facet_grid(.~zb) + theme_bw()
+
+
+
+
+
+```
+
+3. estimate the propensity score with a logistic regression, using all covariates and no interactions, and display the distribution of the propensity score in the treatment and in the control group on the same plot.
+```{r}
+dynarski$prop <- glm(zb ~ faminc + as.factor(incmiss) + as.factor(black) + as.factor(hisp) + afqtpct + as.factor(edmissm) + as.factor(edm) + as.factor(female), family=binomial, data=dynarski)$fitted.values
+
+ggplot(data=dynarski, aes(x=prop, group=as.factor(zb), 
+                     fill=as.factor(zb))) + geom_density(alpha=0.5) + theme_bw()
+```
+
+## Part B
+1. using multivariate matching on all variables, with the Mahalanobis distance (and no caliper), obtain a matched-pair set. Using the `xBalance` function, plot the covariate balance before and after matching.
+
+```{r}
+mat <- smahal(dynarski$z, dynarski[,c('faminc', 'incmiss', 'black', 'hisp', 'afqtpct', 'edmissm', 'edm', 'female')]) 
+ms <- pairmatch(mat, data=dynarski)
+matched_summary <- summarize.match(dynarski, ms)
+print(ms, grouped = TRUE)
+
+plot(xBalance(zb ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female -1, 
+              strata=list(unstrat=NULL, ms=~ms),
+              data=dynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+
+```
+
+2. We now explore propensity score calipers:
+  (i). What is the average absolute difference in propensity scores within matched pairs? What is the maximum absolute difference in propensity score?
+
+```{r}
+abs_diff <- abs(matched_summary$prop.0 - matched_summary$prop.1)
+mean_abs_diff <- mean(abs_diff)
+max_abs_diff <- max(abs_diff)
+
+print(paste('The average absolute difference in propensity scores within matched pairs: ', mean_abs_diff))
+print(paste('The maximum absolute difference in propensity scores within matched pairs: ', max_abs_diff))
+```
+
+  (ii). Add a propensity score caliper $\gamma = 0.1 \times sd(\pi(x))$, using the `addcaliper` function, obtain a new matched-pair set, and plot the covariate balance for before and after caliper matching.
+  
+```{r}
+mat_caliper <- addcaliper(mat, z=dynarski$z, p=dynarski$prop, caliper=0.1)
+ms_caliper <- pairmatch(mat_caliper, data=dynarski)
+plot(xBalance(zb ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female + prop -1, 
+              strata=list(unstrat=NULL, ms=~ms_caliper),
+              data=dynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+```
+  (iii). repeat (i) for this new matched set.
+  
+```{r}
+matched_caliper_summary <- summarize.match(dynarski, ms_caliper)
+abs_diff_caliper <- abs(matched_caliper_summary$prop.0 - matched_caliper_summary$prop.1)
+mean_abs_diff_caliper <- mean(abs_diff_caliper)
+max_abs_diff_caliper <- max(abs_diff_caliper)
+
+print(paste('The average absolute difference in propensity scores within matched pairs after adding caliper: ', mean_abs_diff_caliper))
+print(paste('The maximum absolute difference in propensity scores within matched pairs after adding caliper: ', max_abs_diff_caliper))
+```
+3. What do you think about these two matched sets? Do you think that the matching was successful?
+
+Both two matched sets are more balanced in covariates than the unmatched dataset. The matched set with an added caliper further reduces the propensity score imbalance. While the matching reduces covariates imbalance and are easy to interpret, it is inefficient because lots of data points are unexploited due to a mismatch. 
+
+
+## PartC: 1-to-k matching
+1. Using the `pairmatch` function, obtain a matched-set for which each treated unit is matched to 5 controls (include the same caliper as in the previous question).
+  (i). plot the covariate balance before and after matching
+
+```{r}
+mat_k <- smahal(dynarski$zb, dynarski[,c('faminc', 'incmiss', 'black', 'hisp', 'afqtpct', 'edmissm', 'edm', 'female')]) 
+mat_caliper_k <- addcaliper(mat_k, z=dynarski$zb, p=dynarski$prop, caliper=0.1)
+ms_caliper_k <- pairmatch(controls = 5, mat_caliper_k, data=dynarski)
+plot(xBalance(zb ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female + prop -1, 
+              strata=list(unstrat=NULL, ms=~ms_caliper_k),
+              data=dynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+```
+
+  (ii). using the `addalmostexact` function, try to force balance on the `edm` variable. plot the cavariate balance before and after matching
+
+```{r}
+
+mat_exact_k <- addalmostexact(mat_caliper_k, z=dynarski$zb, f=dynarski$edm)
+ms_exact_k <- pairmatch(controls = 5, mat_exact_k, data=dynarski)
+plot(xBalance(zb ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female + prop -1, 
+              strata=list(unstrat=NULL, ms=~ms_exact_k),
+              data=dynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+```
+  (iii). did that last operation improve the matching?
+
+  The last operation forces the covariate imbalance in `edm` to be 0. Since the imbalance before exact matching is already very close to 0, the last operation brings limited improvement in covariates matching. Observe that the imbalance between propensity score in treated and control increases after this operation.
+  
+2. obtain a matched-set for which each treated unit is matched to 15 controls.
+  (i). plot the balance before and after matching
+  
+```{r}
+ms_15 <- pairmatch(controls = 15, mat_k, data=dynarski)
+k15_summary <- summarize.match(dynarski, ms_15)
+plot(xBalance(zb ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female + prop -1, 
+              strata=list(unstrat=NULL, ms=~ms_15),
+              data=dynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+```
+  (ii) how does the covariate balance compare to that of 1-to-5 matching. which one would you recommend using in a subsequent analysis?
+```{r}
+ms_5 <- pairmatch(controls = 5, mat_k, data=dynarski)
+k5_summary <- summarize.match(dynarski, ms_5)
+plot(xBalance(zb ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female + prop -1, 
+              strata=list(unstrat=NULL, ms=~ms_5),
+              data=dynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+```
+
+Matching a treated unit to 5 controls reduces more covariate imbalance compared to matching a treated unit to 15 controls. As the number of k increases in the 1-to-k matching, individuals become less similar in each matched pair. I would recommend using the 1-to-5 matching in a subsequent analysis since it better balances the covariates so that the result obtained will be more precise. 
+
+
+
+# Problem2
+## Post-matching analysis
+```{r}
+load('adynarski.Rdata')
+```
+1. construct a 1:1 matched set using all covariates, and with a propensity score caliper $\gamma = 0.1 \times sd(\pi(x))$
+
+```{r}
+mat <- smahal(adynarski$z, adynarski[,c('faminc', 'incmiss', 'black', 'hisp', 'afqtpct', 'edmissm', 'edm', 'female')]) 
+mat_caliper <- addcaliper(mat, z=adynarski$z, p=adynarski$prop, caliper=0.1)
+ms_caliper <- pairmatch(mat_caliper, data=adynarski)
+caliper_summary <- summarize.match(adynarski, ms_caliper)
+plot(xBalance(z ~faminc + incmiss + black + hisp + afqtpct + edmissm + edm + female + prop -1, 
+              strata=list(unstrat=NULL, ms=~ms_caliper),
+              data=adynarski)) 
+legend(
+    "topright",
+    legend = c("unstrat", "matching"),
+    inset = 0.01,
+    pch = c(15, 16),
+    bg = "white"
+)
+```
+2. compute the p-value from a FRT of fisher's sharp null from the 1:1 matched data set.
+```{r}
+paired_te <- caliper_summary$y.1 - caliper_summary$y.0
+obs_stats <- mean(paired_te)
+N <- 2000
+sim_stats <- numeric(N)
+n <- length(caliper_summary$y.1)
+for (i in 1:N){
+  random_z <- sapply(1:n, function(i) ifelse(runif(1) < 0.5, 1, -1))
+  sim_stats[i] <- mean(random_z * paired_te)
+}
+p_value <- mean(sim_stats >= obs_stats)
+print(paste('p-value: ', p_value))
+```
+
+3. compute a bias-corrected estimate of the average treatment effect on the treated and estimate its variance.
+
+```{r}
+caliper_summary
+mu_0 <- lm(y.0 ~  afqtpct.0 + black.0 + edm.0 + edmissm.0 + faminc.0 + female.0 + hisp.0+ incmiss.0, data = caliper_summary)
+mu_1 <- lm(y.1 ~  afqtpct.1 + black.1 + edm.1 + edmissm.1 + faminc.1 + female.1 + hisp.1+ incmiss.1, data = caliper_summary)
+
+treat_covariates <- c("afqtpct.1", "black.1", "edm.1", "edmissm.1", "faminc.1", "female.1", "hisp.1", "incmiss.1")
+control_covariates <- c("afqtpct.0", "black.0", "edm.0", "edmissm.0","faminc.0", "female.0", "hisp.0", "incmiss.0")
+new_control <- subset(caliper_summary, select = control_covariates)
+new_treat <- subset(caliper_summary, select = treat_covariates)
+
+mu1_hat_treat <- predict(mu_1, newdata = new_treat)
+colnames(new_treat) <- control_covariates
+mu0_hat_treat <- predict(mu_0, newdata = new_treat)
+mu0_hat_control <- predict(mu_0, newdata = new_control)
+colnames(new_control) <- treat_covariates
+mu1_hat_control <- predict(mu_1, newdata = new_control)
+
+
+correction <- (sum(mu0_hat_treat - mu0_hat_control) +sum(mu1_hat_treat - mu1_hat_control)) / (nrow(caliper_summary) * 2)
+adjusted_ate <- mean(caliper_summary$y.1 - caliper_summary$y.0) - correction
+print(paste('A bias-corrected estimate of the average treatment effect on the treated', adjusted_ate))
+
+```
+```{r}
+K_i <- 1
+M <- 1
+
+
+phi_treated <- mu1_hat_treat - mu0_hat_treat + (1 + K_i/M)*(caliper_summary$y.1 - mu1_hat_treat)
+phi_control <- mu1_hat_control - mu0_hat_control -(1 + K_i/M)*(caliper_summary$y.0 - mu0_hat_control)
+
+
+v_hat<- (sum((phi_treated - adjusted_ate)**2) +sum((phi_control - adjusted_ate)**2)) / ((nrow(caliper_summary) * 2)**2)
+
+print(paste('the estimated variance is: ', v_hat))
+
+```
+
+
+
+
+##PartB: Stratification
+
+1. compute the 20th, 40th, 60th, and 80th percentiles of the propensity score, denoted q20, q40, q60, and q80.
+
+```{r}
+q20 <- quantile(adynarski$prop, probs = 0.2)
+q40 <- quantile(adynarski$prop, probs = 0.4)
+q60 <- quantile(adynarski$prop, probs = 0.6)
+q80 <- quantile(adynarski$prop, probs = 0.8)
+
+print(paste('q20: ', q20))
+print(paste('q40: ', q40))
+print(paste('q60: ', q60))
+print(paste('q80: ', q80))
+```
+
+```{r}
+
+count_in_strata <- function(lb, ub){
+  strata <- adynarski[(adynarski$prop>=lb) & (adynarski$prop<ub), ]
+  n0 <- sum(strata$z == 0)
+  n1 <- sum(strata$z == 1)
+  return (c(n0, n1))
+}
+
+qtls <- c(0, q20, q40, q60, q80, 1)
+
+for (i in 1: 5){
+  r <- count_in_strata(qtls[i], qtls[i+1])
+  strata_n0 <- r[1]
+  strata_n1 <- r[2]
+  print(paste('strata', i, 'num_treated: ', strata_n1, ', num_control: ', strata_n0))
+}
+
+
+```
+
+3. compute the stratified difference in means estimate $\hat{\tau_S}$ of the ATE based on the above strata. compute the estimate of the variance. 
+```{r}
+strata_tau <- numeric(5)
+strata_w <- numeric(5)
+strata_var <- numeric(5)
+for (i in 1:5){
+  strata <- adynarski[(adynarski$prop>=qtls[i]) & (adynarski$prop<qtls[i+1]),]
+  strata_w[i] <- nrow(strata)
+  strata_treat <- strata$y[strata$z ==1]
+  strata_control <- strata$y[strata$z ==0]
+  strata_tau[i] <- mean(strata_treat) - mean(strata_control)
+  n0 <-  length(strata_control)
+  n1 <-  length(strata_treat)
+  strata_var[i] <- var(strata_treat)/n1 + var(strata_control)/n0
+}
+strata_w <- strata_w /sum(strata_w)
+stratified_dim <- strata_w %*% strata_tau
+var_hat <- strata_w^2 %*% strata_var
+print(paste('The stratified difference in means estimate is: ', stratified_dim))
+print(paste('The estimate of the variance is: ', var_hat))
+```
+
+
+4. compute a 95% confidence interval based on a Normal approximation. Does this provide evidence against Neyman's null?
+
+```{r}
+lb <- stratified_dim - 1.96 * sqrt(var_hat)
+ub <- stratified_dim + 1.96 * sqrt(var_hat)
+print(paste('The 95% confidence interval is: [', lb, ',',ub, ']'))
+```
+
+This does not provide evidence against Neyman's null since 0 is contained in the confidence interval.
+
+5. discuss the downside of this approach and possible solutions. 
+
+In each strata, there might be an imbalance between the number of treated units and the number of control units, the estimated stratified treatment effect can have huge variance. Solution is to use weighting techniques to adjust for the imbalance.
+
+The approach highly relies on the propensity score model. If the propensity score model does not capture the relationship between covariates and treatment assignment, the estimated treatment effect would be biased. 
+
+Stratified treatment effect is hard to compute if there is not sufficient treated and control units within each propensity score strata. solution is to use reduce the number of stratas to split. 
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
